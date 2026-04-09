@@ -3,190 +3,122 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>에너지 시장 통합 대시보드</title>
-    
+    <title>Energy Intelligence Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/date-fns@3.6.0/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
-
     <style>
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         body { font-family: 'Pretendard', sans-serif; margin: 0; background: #f8f9fa; color: #334155; }
         .container { max-width: 1300px; margin: auto; padding: 40px 20px; }
-        h1 { font-size: 26px; font-weight: 800; margin-bottom: 30px; letter-spacing: -0.5px; }
         .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 40px; }
-        .card { background: white; padding: 24px; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #f1f5f9; }
-        .label { font-size: 13px; color: #64748b; font-weight: 600; margin-bottom: 8px; }
-        .val-row { display: flex; align-items: baseline; gap: 10px; }
-        .current-val { font-size: 30px; font-weight: 800; color: #0f172a; }
-        .change { font-size: 14px; font-weight: 700; padding: 4px 10px; border-radius: 6px; }
+        .card { background: white; padding: 24px; border-radius: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .label { font-size: 13px; color: #64748b; font-weight: 600; }
+        .current-val { font-size: 32px; font-weight: 800; color: #0f172a; }
+        .change { font-size: 14px; font-weight: 700; border-radius: 6px; padding: 2px 8px; }
         .up { color: #ef4444; background: #fef2f2; }
         .down { color: #3b82f6; background: #eff6ff; }
-        .chart-container { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #f1f5f9; }
-        .controls { display: flex; justify-content: space-between; margin-bottom: 30px; flex-wrap: wrap; gap: 20px; }
-        .btn-group { display: flex; gap: 8px; }
-        .btn { border: 1px solid #e2e8f0; background: white; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; color: #475569; transition: 0.2s; }
-        .btn.active { background: #1e293b; color: white; border-color: #1e293b; }
-        canvas { width: 100% !important; height: 450px !important; }
+        .chart-container { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .btn-group { display: flex; gap: 8px; margin-bottom: 20px; }
+        .btn { border: 1px solid #e2e8f0; background: white; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        .btn.active { background: #1e293b; color: white; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>📊 Energy Market Intelligence</h1>
+        <h1>📊 Energy Market intelligence</h1>
         <div class="kpi-grid" id="kpiGrid"></div>
         <div class="chart-container">
-            <div class="controls">
-                <div>
-                    <div class="label">기간 선택</div>
-                    <div class="btn-group" id="rangeBtns">
-                        <button class="btn active" onclick="setRange('1M')">1개월</button>
-                        <button class="btn" onclick="setRange('3M')">3개월</button>
-                        <button class="btn" onclick="setRange('1Y')">1년</button>
-                        <button class="btn" onclick="setRange('MAX')">전체</button>
-                    </div>
-                </div>
-                <div>
-                    <div class="label">지표 전환</div>
-                    <div class="btn-group" id="indicatorBtns"></div>
-                </div>
-            </div>
+            <div id="btnContainer" class="btn-group"></div>
             <canvas id="mainChart"></canvas>
         </div>
     </div>
 
     <script>
         const CSV_URL = "https://docs.google.com/spreadsheets/d/11XokXCCeo2syVNWST98ULSjFhj-t2iTNLSBPPXCHxuQ/gviz/tq?tqx=out:csv&gid=0";
+        let rawData = [], chart = null, currentKey = 'Brent';
 
-        let rawData = [];
-        let chartObj = null;
-        let config = { range: '1M', indicator: 'Brent' };
-
-        // [중요] 사용자가 제공한 데이터 구조와 100% 일치하도록 매핑
+        // 지표 정의 (헤더에 이 단어가 포함되면 낚아챔)
         const metrics = {
-            "Brent": { label: "Brent 유가", key: "Brent ($/bbl)", unit: "$/bbl", color: "#ef4444" },
-            "WTI": { label: "WTI 유가", key: "WTI ($/bbl)", unit: "$/bbl", color: "#f59e0b" },
-            "HH_Spot": { label: "HH (Spot)", key: "HH(Spot) ($/MMBtu)", unit: "$/MMBtu", color: "#10b981" },
-            "HH_Future": { label: "HH (Future)", key: "HH(Future) ($/MMBtu)", unit: "$/MMBtu", color: "#059669" },
-            "JKM": { label: "JKM LNG", key: "JKM ($/MMBtu)", unit: "$/MMBtu", color: "#3b82f6" },
-            "TTF_Converted": { label: "TTF 환산", key: "TTF ($/MMBtu)", unit: "$/MMBtu", color: "#8b5cf6" },
-            "SMP": { label: "SMP 육지", key: "SMP (원/kWh)", unit: "원/kWh", color: "#6366f1" },
-            "USD": { label: "환율 (USD)", key: "USD (원/$)", unit: "원", color: "#64748b" }
+            'Brent': { label: 'Brent 유가', color: '#ef4444', unit: '$/bbl' },
+            'JKM': { label: 'JKM LNG', color: '#3b82f6', unit: '$/MMBtu' },
+            'SMP': { label: 'SMP 육지', color: '#6366f1', unit: '원/kWh' },
+            'TTF': { label: 'TTF 환산', color: '#8b5cf6', unit: '$/MMBtu' }
         };
 
         Papa.parse(CSV_URL, {
             download: true, header: true, skipEmptyLines: true,
             complete: (results) => {
-                // 데이터 샘플링 및 정제
+                const headers = Object.keys(results.data[0]);
+                console.log("실제 헤더:", headers);
+
+                // 유연한 헤더 매핑 함수 (대소문자 무시, 포함 여부 확인)
+                const findKey = (target) => headers.find(h => h.toLowerCase().includes(target.toLowerCase()));
+
                 rawData = results.data.map(d => {
-                    let obj = { date: new Date(d["Date"]) };
-                    Object.keys(metrics).forEach(mKey => {
-                        const sheetKey = metrics[mKey].key;
-                        const rawVal = d[sheetKey] ? d[sheetKey].toString().replace(/,/g, '').trim() : "0";
-                        obj[mKey] = parseFloat(rawVal) || 0;
+                    let obj = { date: new Date(d[findKey('Date')]) };
+                    Object.keys(metrics).forEach(k => {
+                        const actualKey = findKey(k);
+                        const val = d[actualKey] ? d[actualKey].replace(/,/g, '') : "0";
+                        obj[k] = parseFloat(val) || 0;
                     });
                     return obj;
-                }).filter(d => d.date instanceof Date && !isNaN(d.date.getTime()));
-                
-                if (rawData.length > 0) initDashboard();
-                else console.error("Data processing failed. Check header names.");
+                }).filter(d => !isNaN(d.date));
+
+                init();
             }
         });
 
-        function initDashboard() {
+        function init() {
             renderKPI();
-            initIndicatorBtns();
-            updateChart();
+            const btns = document.getElementById('btnContainer');
+            Object.keys(metrics).forEach(k => {
+                const b = document.createElement('button');
+                b.className = 'btn' + (k === currentKey ? ' active' : '');
+                b.innerText = metrics[k].label;
+                b.onclick = () => {
+                    currentKey = k;
+                    document.querySelectorAll('.btn').forEach(x => x.classList.remove('active'));
+                    b.classList.add('active');
+                    renderChart();
+                };
+                btns.appendChild(b);
+            });
+            renderChart();
         }
 
         function renderKPI() {
             const grid = document.getElementById('kpiGrid');
-            const latest = rawData[rawData.length - 1];
-            const prev = rawData[rawData.length - 2] || latest;
-            const displayKeys = ["Brent", "JKM", "SMP", "TTF_Converted"];
-            
-            grid.innerHTML = displayKeys.map(key => {
-                const cur = latest[key];
-                const old = prev[key];
-                const diff = cur - old;
-                const pct = old !== 0 ? ((diff / old) * 100).toFixed(2) : "0.00";
-                const isUp = diff >= 0;
-
-                return `
-                    <div class="card">
-                        <div class="label">${metrics[key].label}</div>
-                        <div class="val-row">
-                            <span class="current-val">${cur.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                            <span class="change ${isUp ? 'up' : 'down'}">
-                                ${isUp ? '▲' : '▼'} ${Math.abs(pct)}%
-                            </span>
-                        </div>
-                        <div class="sub-info">전일 대비 ${Math.abs(diff).toFixed(2)} ${metrics[key].unit}</div>
-                    </div>
-                `;
+            const latest = rawData[rawData.length - 1], prev = rawData[rawData.length - 2];
+            grid.innerHTML = Object.keys(metrics).map(k => {
+                const diff = latest[k] - prev[k], pct = ((diff / prev[k]) * 100).toFixed(2);
+                return `<div class="card">
+                    <div class="label">${metrics[k].label}</div>
+                    <div class="current-val">${latest[k].toFixed(2)}</div>
+                    <div class="change ${diff >= 0 ? 'up' : 'down'}">${diff >= 0 ? '▲' : '▼'} ${Math.abs(pct)}%</div>
+                </div>`;
             }).join('');
         }
 
-        function initIndicatorBtns() {
-            const container = document.getElementById('indicatorBtns');
-            container.innerHTML = Object.keys(metrics).map(key => `
-                <button class="btn ${key === config.indicator ? 'active' : ''}" 
-                        onclick="setIndicator('${key}')">${metrics[key].label}</button>
-            `).join('');
-        }
-
-        function setRange(range) {
-            config.range = range;
-            document.querySelectorAll('#rangeBtns .btn').forEach(b => b.classList.remove('active'));
-            event.target.classList.add('active');
-            updateChart();
-        }
-
-        function setIndicator(key) {
-            config.indicator = key;
-            document.querySelectorAll('#indicatorBtns .btn').forEach(b => b.classList.remove('active'));
-            event.target.classList.add('active');
-            updateChart();
-        }
-
-        function updateChart() {
+        function renderChart() {
             const ctx = document.getElementById('mainChart').getContext('2d');
-            const filtered = filterData();
-            const meta = metrics[config.indicator];
-
-            if (chartObj) chartObj.destroy();
-
-            chartObj = new Chart(ctx, {
+            if (chart) chart.destroy();
+            chart = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: filtered.map(d => d.date),
+                    labels: rawData.map(d => d.date),
                     datasets: [{
-                        label: meta.label,
-                        data: filtered.map(d => d[config.indicator]),
-                        borderColor: meta.color,
-                        backgroundColor: meta.color + '15',
-                        fill: true, tension: 0.3, borderWidth: 3, pointRadius: 0, pointHoverRadius: 6
+                        label: metrics[currentKey].label,
+                        data: rawData.map(d => d[currentKey]),
+                        borderColor: metrics[currentKey].color,
+                        tension: 0.3, fill: false, pointRadius: 0
                     }]
                 },
                 options: {
-                    responsive: true, maintainAspectRatio: false,
-                    scales: {
-                        x: { type: 'time', time: { unit: 'day' }, grid: { display: false } },
-                        y: { beginAtZero: false, grid: { color: '#f1f5f9' } }
-                    },
-                    plugins: { legend: { display: false } }
+                    scales: { x: { type: 'time', time: { unit: 'day' } } }
                 }
             });
-        }
-
-        function filterData() {
-            const end = rawData[rawData.length - 1].date;
-            let start = new Date(end);
-            if (config.range === '1M') start.setMonth(end.getMonth() - 1);
-            else if (config.range === '3M') start.setMonth(end.getMonth() - 3);
-            else if (config.range === '1Y') start.setFullYear(end.getFullYear() - 1);
-            else return rawData;
-            return rawData.filter(d => d.date >= start);
         }
     </script>
 </body>
